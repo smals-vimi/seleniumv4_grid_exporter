@@ -1,0 +1,1 @@
+go build -ldflags "-X main.version=1.0.0 -X 'main.gitCommit=$(git rev-parse --short HEAD)'"

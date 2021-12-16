@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -26,9 +27,15 @@ const (
 )
 
 var (
+	versionFlag   = flag.Bool("version", false, "Prints the version and exits.")
 	listenAddress = flag.String("listen-address", ":8080", "Address on which to expose metrics.")
 	metricsPath   = flag.String("telemetry-path", "/metrics", "Path under which to expose metrics.")
 	scrapeURI     = flag.String("scrape-uri", "http://grid.local", "URI on which to scrape Selenium Grid.")
+)
+
+var (
+	version   string
+	gitCommit string
 )
 
 type Exporter struct {
@@ -285,7 +292,12 @@ func (e Exporter) fetch() (output []byte, err error) {
 func main() {
 	flag.Parse()
 
-	log.Infoln("Starting selenium_grid_exporter")
+	if *versionFlag {
+		fmt.Printf("Selenium Grid Exporter v%s (%s)\n", version, gitCommit)
+		os.Exit(0)
+	}
+
+	log.Infoln("Starting selenium_grid_exporter", version)
 
 	prometheus.MustRegister(NewExporter(*scrapeURI))
 	prometheus.Unregister(prometheus.NewGoCollector())
