@@ -76,37 +76,38 @@ func NewExporter(uri string) *Exporter {
 		URI: uri,
 		up: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
+			Subsystem: gridSubsystem,
 			Name:      "up",
 			Help:      "was the last scrape of Selenium Grid successful.",
 		}),
 		totalSlots: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: gridSubsystem,
-			Name:      "totalSlots",
+			Name:      "total_slots",
 			Help:      "total number of usedSlots",
 		}),
 		maxSession: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: gridSubsystem,
-			Name:      "maxSession",
+			Name:      "max_session",
 			Help:      "maximum number of sessions",
 		}),
 		sessionCount: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: gridSubsystem,
-			Name:      "sessionCount",
+			Name:      "session_count",
 			Help:      "number of active sessions",
 		}),
 		sessionQueueSize: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: gridSubsystem,
-			Name:      "sessionQueueSize",
+			Name:      "session_queue_size",
 			Help:      "number of queued sessions",
 		}),
 		nodeCount: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: gridSubsystem,
-			Name:      "nodeCount",
+			Name:      "node_count",
 			Help:      "number of nodes",
 		}),
 		// NEW
@@ -126,19 +127,19 @@ func NewExporter(uri string) *Exporter {
 		nodeMaxSession: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: nodeSubsystem,
-			Name:      "maxSession",
+			Name:      "max_session",
 			Help:      "maximum number of sessions on node",
 		}, []string{nodeIdLabel, nodeUriLabel}),
 		nodeSlotCount: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: nodeSubsystem,
-			Name:      "slotCount",
+			Name:      "slot_count",
 			Help:      "number of slots on node",
 		}, []string{nodeIdLabel, nodeUriLabel}),
 		nodeSessionCount: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: nodeSubsystem,
-			Name:      "sessionCount",
+			Name:      "session_count",
 			Help:      "number of active sessions on node",
 		}, []string{nodeIdLabel, nodeUriLabel}),
 		nodeVersion: prometheus.NewGaugeVec(prometheus.GaugeOpts{

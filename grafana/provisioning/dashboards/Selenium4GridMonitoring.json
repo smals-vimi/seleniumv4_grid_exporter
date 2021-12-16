@@ -66,25 +66,25 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "selenium_grid_hub_maxSession",
+          "expr": "selenium_grid_max_session",
           "interval": "",
           "legendFormat": "maxSession",
           "refId": "A"
         },
         {
-          "expr": "selenium_grid_hub_sessionCount",
+          "expr": "selenium_grid_session_count",
           "interval": "",
           "legendFormat": "sessionCount",
           "refId": "B"
         },
         {
-          "expr": "selenium_grid_hub_sessionQueueSize",
+          "expr": "selenium_grid_session_queue_size",
           "interval": "",
           "legendFormat": "sessionQueueSize",
           "refId": "C"
         },
         {
-          "expr": "selenium_grid_hub_totalSlots",
+          "expr": "selenium_grid_total_slots",
           "interval": "",
           "legendFormat": "totalSlots",
           "refId": "D"
