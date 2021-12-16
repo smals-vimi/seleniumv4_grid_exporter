@@ -16,8 +16,13 @@ import (
 )
 
 const (
-	nameSpace = "selenium_grid"
-	subSystem = "hub"
+	nameSpace     = "selenium"
+	gridSubsystem = "grid"
+	nodeSubsystem = "node"
+	nodeIdLabel   = "node_id"
+	nodeUriLabel  = "node_uri"
+	statusLabel   = "status"
+	versionLabel  = "version"
 )
 
 var (
@@ -27,9 +32,13 @@ var (
 )
 
 type Exporter struct {
-	URI                                                        string
-	mutex                                                      sync.RWMutex
-	up, totalSlots, maxSession, sessionCount, sessionQueueSize prometheus.Gauge
+	URI                                                         string
+	mutex                                                       sync.RWMutex
+	up, totalSlots, maxSession, sessionCount, sessionQueueSize  prometheus.Gauge
+	version                                                     *prometheus.GaugeVec
+	nodeCount                                                   prometheus.Gauge
+	nodeStatus, nodeMaxSession, nodeSlotCount, nodeSessionCount *prometheus.GaugeVec
+	nodeVersion                                                 *prometheus.GaugeVec
 }
 
 type hubResponse struct {
@@ -39,8 +48,25 @@ type hubResponse struct {
 			MaxSession       float64 `json:"maxSession"`
 			SessionCount     float64 `json:"sessionCount"`
 			SessionQueueSize float64 `json:"sessionQueueSize"`
+			// new information
+			NodeCount float64 `json:"nodeCount"`
+			Version   string  `json:"version"`
 		} `json:"grid"`
+		NodesInfo struct {
+			Nodes []HubResponseNode `json:"nodes"`
+		} `json:"nodesInfo"`
+		// TODO sessionsInfo { sessionQueueRequests, sessions { capabilities, startTime, nodeId, sessionDurationMillis } }
 	} `json:"data"`
+}
+
+type HubResponseNode struct {
+	Id           string  `json:"id"`
+	Uri          string  `json:"uri"`
+	Status       string  `json:"status"`
+	MaxSession   float64 `json:"maxSession"`
+	SlotCount    float64 `json:"slotCount"`
+	SessionCount float64 `json:"sessionCount"`
+	Version      string  `json:"version"`
 }
 
 func NewExporter(uri string) *Exporter {
@@ -55,39 +81,97 @@ func NewExporter(uri string) *Exporter {
 		}),
 		totalSlots: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
-			Subsystem: subSystem,
+			Subsystem: gridSubsystem,
 			Name:      "totalSlots",
 			Help:      "total number of usedSlots",
 		}),
 		maxSession: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
-			Subsystem: subSystem,
+			Subsystem: gridSubsystem,
 			Name:      "maxSession",
 			Help:      "maximum number of sessions",
 		}),
 		sessionCount: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
-			Subsystem: subSystem,
+			Subsystem: gridSubsystem,
 			Name:      "sessionCount",
 			Help:      "number of active sessions",
 		}),
 		sessionQueueSize: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
-			Subsystem: subSystem,
+			Subsystem: gridSubsystem,
 			Name:      "sessionQueueSize",
 			Help:      "number of queued sessions",
 		}),
+		nodeCount: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: nameSpace,
+			Subsystem: gridSubsystem,
+			Name:      "nodeCount",
+			Help:      "number of nodes",
+		}),
+		// NEW
+		version: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: nameSpace,
+			Subsystem: gridSubsystem,
+			Name:      "version",
+			Help:      "Hub/Router version",
+		}, []string{versionLabel}),
+		// nodes
+		nodeStatus: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: nameSpace,
+			Subsystem: nodeSubsystem,
+			Name:      "status",
+			Help:      "node status",
+		}, []string{nodeIdLabel, nodeUriLabel, statusLabel}),
+		nodeMaxSession: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: nameSpace,
+			Subsystem: nodeSubsystem,
+			Name:      "maxSession",
+			Help:      "maximum number of sessions on node",
+		}, []string{nodeIdLabel, nodeUriLabel}),
+		nodeSlotCount: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: nameSpace,
+			Subsystem: nodeSubsystem,
+			Name:      "slotCount",
+			Help:      "number of slots on node",
+		}, []string{nodeIdLabel, nodeUriLabel}),
+		nodeSessionCount: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: nameSpace,
+			Subsystem: nodeSubsystem,
+			Name:      "sessionCount",
+			Help:      "number of active sessions on node",
+		}, []string{nodeIdLabel, nodeUriLabel}),
+		nodeVersion: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: nameSpace,
+			Subsystem: nodeSubsystem,
+			Name:      "version",
+			Help:      "Node version",
+		}, []string{nodeIdLabel, nodeUriLabel, versionLabel}),
 	}
 }
 
+/*
+Describe is called by Prometheus on startup of this monitor. It needs to tell
+the caller about all of the available metrics. It is also called during "unregister".
+*/
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	e.up.Describe(ch)
 	e.totalSlots.Describe(ch)
 	e.maxSession.Describe(ch)
 	e.sessionCount.Describe(ch)
 	e.sessionQueueSize.Describe(ch)
+	e.nodeCount.Describe(ch)
+	e.version.Describe(ch)
+	e.nodeStatus.Describe(ch)
+	e.nodeMaxSession.Describe(ch)
+	e.nodeSlotCount.Describe(ch)
+	e.nodeSessionCount.Describe(ch)
+	e.nodeVersion.Describe(ch)
 }
 
+/*
+Collect is called by Prometheus at regular intervals to provide current data
+*/
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 	e.mutex.Lock()
@@ -100,6 +184,14 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	ch <- e.maxSession
 	ch <- e.sessionCount
 	ch <- e.sessionQueueSize
+	//new
+	ch <- e.nodeCount
+	e.version.Collect(ch)
+	e.nodeStatus.Collect(ch)
+	e.nodeMaxSession.Collect(ch)
+	e.nodeSlotCount.Collect(ch)
+	e.nodeSessionCount.Collect(ch)
+	e.nodeVersion.Collect(ch)
 
 	return
 }
@@ -110,6 +202,13 @@ func (e *Exporter) scrape() {
 	e.maxSession.Set(0)
 	e.sessionCount.Set(0)
 	e.sessionQueueSize.Set(0)
+	e.nodeCount.Set(0)
+	e.version.Reset()
+	e.nodeStatus.Reset()
+	e.nodeMaxSession.Reset()
+	e.nodeSlotCount.Reset()
+	e.nodeSessionCount.Reset()
+	e.nodeVersion.Reset()
 
 	body, err := e.fetch()
 	if err != nil {
@@ -128,10 +227,21 @@ func (e *Exporter) scrape() {
 		log.Errorf("Can't decode Selenium Grid response: %v", err)
 		return
 	}
-	e.totalSlots.Set(hResponse.Data.Grid.TotalSlots)
-	e.maxSession.Set(hResponse.Data.Grid.MaxSession)
-	e.sessionCount.Set(hResponse.Data.Grid.SessionCount)
-	e.sessionQueueSize.Set(hResponse.Data.Grid.SessionQueueSize)
+	grid := hResponse.Data.Grid
+	e.totalSlots.Set(grid.TotalSlots)
+	e.maxSession.Set(grid.MaxSession)
+	e.sessionCount.Set(grid.SessionCount)
+	e.sessionQueueSize.Set(grid.SessionQueueSize)
+	//new
+	e.nodeCount.Set(grid.NodeCount)
+	e.version.WithLabelValues(grid.Version).Add(1.0)
+	for _, n := range hResponse.Data.NodesInfo.Nodes {
+		e.nodeStatus.WithLabelValues(n.Id, n.Uri, n.Status).Add(1.0)
+		e.nodeMaxSession.WithLabelValues(n.Id, n.Uri).Add(n.MaxSession)
+		e.nodeSlotCount.WithLabelValues(n.Id, n.Uri).Add(n.SlotCount)
+		e.nodeSessionCount.WithLabelValues(n.Id, n.Uri).Add(n.SessionCount)
+		e.nodeVersion.WithLabelValues(n.Id, n.Uri, n.Version).Add(1.0)
+	}
 }
 
 func (e Exporter) fetch() (output []byte, err error) {
@@ -140,8 +250,11 @@ func (e Exporter) fetch() (output []byte, err error) {
 	method := "POST"
 
 	payload := strings.NewReader(`{
-		"query": "{ grid {totalSlots, maxSession, sessionCount, sessionQueueSize} }"
-	}`)
+    "query": "{
+          grid {totalSlots, maxSession, sessionCount, sessionQueueSize, nodeCount, version },
+          nodesInfo { nodes { id, uri, status, maxSession, slotCount, sessionCount, version } }
+      }"
+  }`)
 
 	client := http.Client{
 		Timeout: 3 * time.Second,
