@@ -1,6 +1,6 @@
 module github.com/wakeful/selenium_grid_exporter
 
-go 1.22
+go 1.22.11
 
 require (
 	github.com/prometheus/client_golang v1.20.5
