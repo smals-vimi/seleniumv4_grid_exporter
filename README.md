@@ -7,6 +7,8 @@ A [Prometheus](https://prometheus.io/) exporter that collects [Selenium Grid](ht
 ```sh
 $ docker run -it mcopjan/seleniumv4_grid_exporter:latest -h
 Usage of /selenium_grid_exporter:
+  -http-timeout duration
+      HTTP client timeout for scraping Selenium Grid. (default 5s)
   -listen-address string
       Address on which to expose metrics. (default ":8080")
   -scrape-uri string
@@ -21,7 +23,7 @@ Usage of /selenium_grid_exporter:
   - run docker-compose -f docker-compose.yml up
   - open grafana at localhost:3000 (admin/foobar)
   - open Dashboards -> Manage -> Selenium4 Grid monitoring
-  
+
 ```
   ![Screenshot](selenium4_grafana.png)
 

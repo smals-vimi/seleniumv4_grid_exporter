@@ -13,7 +13,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/prometheus/common/log"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -77,7 +77,7 @@ type HubResponseNode struct {
 }
 
 func NewExporter(uri string) *Exporter {
-	log.Infoln("Collecting data from:", uri)
+	logrus.Infoln("Collecting data from:", uri)
 
 	return &Exporter{
 		URI: uri,
@@ -222,7 +222,7 @@ func (e *Exporter) scrape() {
 	if err != nil {
 		e.up.Set(0)
 
-		log.Errorf("Can't scrape Selenium Grid: %v", err)
+		logrus.Errorf("Can't scrape Selenium Grid: %v", err)
 		return
 	}
 
@@ -232,7 +232,7 @@ func (e *Exporter) scrape() {
 
 	if err := json.Unmarshal(body, &hResponse); err != nil {
 
-		log.Errorf("Can't decode Selenium Grid response: %v", err)
+		logrus.Errorf("Can't decode Selenium Grid response: %v", err)
 		return
 	}
 	grid := hResponse.Data.Grid
@@ -297,7 +297,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	log.Infoln("Starting selenium_grid_exporter", version)
+	logrus.Infoln("Starting selenium_grid_exporter", version)
 
 	prometheus.MustRegister(NewExporter(*scrapeURI))
 	prometheus.Unregister(prometheus.NewGoCollector())
@@ -308,5 +308,5 @@ func main() {
 		http.Redirect(w, r, *metricsPath, http.StatusMovedPermanently)
 	})
 
-	log.Fatal(http.ListenAndServe(*listenAddress, nil))
+	logrus.Fatal(http.ListenAndServe(*listenAddress, nil))
 }
