@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,6 +46,7 @@ type Exporter struct {
 	nodeCount                                                   prometheus.Gauge
 	nodeStatus, nodeMaxSession, nodeSlotCount, nodeSessionCount *prometheus.GaugeVec
 	nodeVersion                                                 *prometheus.GaugeVec
+	nodeSlotStereotypes                                         *prometheus.GaugeVec
 }
 
 type hubResponse struct {
@@ -71,6 +73,16 @@ type HubResponseNode struct {
 	SlotCount    float64 `json:"slotCount"`
 	SessionCount float64 `json:"sessionCount"`
 	Version      string  `json:"version"`
+	Stereotypes  string  `json:"stereotypes"`
+}
+
+type Stereotype struct {
+	Slots      int `json:"slots"`
+	Stereotype struct {
+		BrowserName    string `json:"browserName"`
+		BrowserVersion string `json:"browserVersion"`
+		PlatformName   string `json:"platformName"`
+	} `json:"stereotype"`
 }
 
 func NewExporter(uri string) *Exporter {
@@ -150,6 +162,21 @@ func NewExporter(uri string) *Exporter {
 			Name:      "version",
 			Help:      "Node version.",
 		}, []string{nodeIdLabel, nodeUriLabel, versionLabel}),
+		nodeSlotStereotypes: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: nameSpace,
+				Subsystem: nodeSubsystem,
+				Name:      "slot",
+				Help:      "Selenium node slot with browser stereotypes as labels.",
+			},
+			[]string{
+				nodeIdLabel,       // Node ID
+				"slot_id",         // Slot ID
+				"browser_name",    // Browser name
+				"browser_version", // Browser version
+				"platform_name",   // Platform name
+			},
+		),
 	}
 }
 
@@ -170,6 +197,7 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	e.nodeSlotCount.Describe(ch)
 	e.nodeSessionCount.Describe(ch)
 	e.nodeVersion.Describe(ch)
+	e.nodeSlotStereotypes.Describe(ch)
 }
 
 /*
@@ -190,55 +218,8 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	e.nodeSlotCount.Collect(ch)
 	e.nodeSessionCount.Collect(ch)
 	e.nodeVersion.Collect(ch)
+	e.nodeSlotStereotypes.Collect(ch)
 }
-
-// func (e *Exporter) scrape() {
-
-// 	e.totalSlots.Set(0)
-// 	e.maxSession.Set(0)
-// 	e.sessionCount.Set(0)
-// 	e.sessionQueueSize.Set(0)
-// 	e.nodeCount.Set(0)
-// 	e.version.Reset()
-// 	e.nodeStatus.Reset()
-// 	e.nodeMaxSession.Reset()
-// 	e.nodeSlotCount.Reset()
-// 	e.nodeSessionCount.Reset()
-// 	e.nodeVersion.Reset()
-
-// 	body, err := e.fetch()
-// 	if err != nil {
-// 		e.up.Set(0)
-
-// 		logrus.Errorf("Error scraping Selenium Grid: %v", err)
-// 		return
-// 	}
-
-// 	e.up.Set(1)
-
-// 	var hResponse hubResponse
-
-// 	if err := json.Unmarshal(body, &hResponse); err != nil {
-
-// 		logrus.Errorf("Error decoding Selenium Grid response: %v", err)
-// 		return
-// 	}
-// 	grid := hResponse.Data.Grid
-// 	e.totalSlots.Set(grid.TotalSlots)
-// 	e.maxSession.Set(grid.MaxSession)
-// 	e.sessionCount.Set(grid.SessionCount)
-// 	e.sessionQueueSize.Set(grid.SessionQueueSize)
-// 	//new
-// 	e.nodeCount.Set(grid.NodeCount)
-// 	e.version.WithLabelValues(grid.Version).Set(1.0)
-// 	for _, n := range hResponse.Data.NodesInfo.Nodes {
-// 		e.nodeStatus.WithLabelValues(n.Id, n.Uri, n.Status).Set(1.0)
-// 		e.nodeMaxSession.WithLabelValues(n.Id, n.Uri).Set(n.MaxSession)
-// 		e.nodeSlotCount.WithLabelValues(n.Id, n.Uri).Set(n.SlotCount)
-// 		e.nodeSessionCount.WithLabelValues(n.Id, n.Uri).Set(n.SessionCount)
-// 		e.nodeVersion.WithLabelValues(n.Id, n.Uri, n.Version).Set(1.0)
-// 	}
-// }
 
 func (e *Exporter) scrape() {
 	body, err := e.fetch()
@@ -252,6 +233,7 @@ func (e *Exporter) scrape() {
 		e.nodeSlotCount.Reset()
 		e.nodeSessionCount.Reset()
 		e.nodeVersion.Reset()
+		e.nodeSlotStereotypes.Reset()
 		return
 	}
 
@@ -269,6 +251,7 @@ func (e *Exporter) scrape() {
 		e.nodeSlotCount.Reset()
 		e.nodeSessionCount.Reset()
 		e.nodeVersion.Reset()
+		e.nodeSlotStereotypes.Reset()
 		return
 	}
 
@@ -287,6 +270,7 @@ func (e *Exporter) scrape() {
 	e.nodeSlotCount.Reset()
 	e.nodeSessionCount.Reset()
 	e.nodeVersion.Reset()
+	e.nodeSlotStereotypes.Reset()
 
 	for _, n := range hResponse.Data.NodesInfo.Nodes {
 		e.nodeStatus.WithLabelValues(n.Id, n.Uri, n.Status).Set(1.0)
@@ -294,6 +278,22 @@ func (e *Exporter) scrape() {
 		e.nodeSlotCount.WithLabelValues(n.Id, n.Uri).Set(n.SlotCount)
 		e.nodeSessionCount.WithLabelValues(n.Id, n.Uri).Set(n.SessionCount)
 		e.nodeVersion.WithLabelValues(n.Id, n.Uri, n.Version).Set(1.0)
+		// Parse stereotypes JSON
+		var parsedStereotypes []Stereotype
+		if err := json.Unmarshal([]byte(n.Stereotypes), &parsedStereotypes); err != nil {
+			logrus.Errorf("Error decoding stereotypes for node %s: %v", n.Id, err)
+			continue
+		}
+
+		for _, s := range parsedStereotypes {
+			e.nodeSlotStereotypes.WithLabelValues(
+				n.Id,
+				strconv.Itoa(s.Slots),
+				s.Stereotype.BrowserName,
+				s.Stereotype.BrowserVersion,
+				s.Stereotype.PlatformName,
+			).Set(1.0)
+		}
 	}
 }
 
@@ -302,7 +302,7 @@ func (e Exporter) fetch() ([]byte, error) {
 	req, err := http.NewRequest("POST", e.URI+"/graphql", strings.NewReader(`{
         "query": "{
             grid {totalSlots, maxSession, sessionCount, sessionQueueSize, nodeCount, version },
-            nodesInfo { nodes { id, uri, status, maxSession, slotCount, sessionCount, version } }
+            nodesInfo { nodes { id, uri, status, maxSession, slotCount, sessionCount, version, stereotypes } }
         }"
     }`))
 	if err != nil {
