@@ -4,11 +4,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,9 +27,10 @@ const (
 
 var (
 	versionFlag   = flag.Bool("version", false, "Prints the version and exits.")
-	listenAddress = flag.String("listen-address", ":8080", "Address on which to expose metrics.")
-	metricsPath   = flag.String("telemetry-path", "/metrics", "Path under which to expose metrics.")
-	scrapeURI     = flag.String("scrape-uri", "http://grid.local", "URI on which to scrape Selenium Grid.")
+	listenAddress = flag.String("listen-address", getEnv("LISTEN_ADDRESS", ":8080"), "Address on which to expose metrics.")
+	metricsPath   = flag.String("telemetry-path", getEnv("TELEMETRY_PATH", "/metrics"), "Path under which to expose metrics.")
+	scrapeURI     = flag.String("scrape-uri", getEnv("SCRAPE_URI", "http://grid.local"), "URI on which to scrape Selenium Grid.")
+	httpTimeout   = flag.Duration("http-timeout", parseDuration(getEnv("HTTP_TIMEOUT", "5s")), "HTTP client timeout for scraping Selenium Grid.")
 )
 
 var (
@@ -40,7 +40,6 @@ var (
 
 type Exporter struct {
 	URI                                                         string
-	mutex                                                       sync.RWMutex
 	up, totalSlots, maxSession, sessionCount, sessionQueueSize  prometheus.Gauge
 	version                                                     *prometheus.GaugeVec
 	nodeCount                                                   prometheus.Gauge
@@ -55,14 +54,12 @@ type hubResponse struct {
 			MaxSession       float64 `json:"maxSession"`
 			SessionCount     float64 `json:"sessionCount"`
 			SessionQueueSize float64 `json:"sessionQueueSize"`
-			// new information
-			NodeCount float64 `json:"nodeCount"`
-			Version   string  `json:"version"`
+			NodeCount        float64 `json:"nodeCount"`
+			Version          string  `json:"version"`
 		} `json:"grid"`
 		NodesInfo struct {
 			Nodes []HubResponseNode `json:"nodes"`
 		} `json:"nodesInfo"`
-		// TODO sessionsInfo { sessionQueueRequests, sessions { capabilities, startTime, nodeId, sessionDurationMillis } }
 	} `json:"data"`
 }
 
@@ -85,75 +82,73 @@ func NewExporter(uri string) *Exporter {
 			Namespace: nameSpace,
 			Subsystem: gridSubsystem,
 			Name:      "up",
-			Help:      "was the last scrape of Selenium Grid successful.",
+			Help:      "Was the last scrape of Selenium Grid successful.",
 		}),
 		totalSlots: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: gridSubsystem,
 			Name:      "total_slots",
-			Help:      "total number of usedSlots",
+			Help:      "Total number of slots.",
 		}),
 		maxSession: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: gridSubsystem,
 			Name:      "max_session",
-			Help:      "maximum number of sessions",
+			Help:      "Maximum number of sessions.",
 		}),
 		sessionCount: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: gridSubsystem,
 			Name:      "session_count",
-			Help:      "number of active sessions",
+			Help:      "Number of active sessions.",
 		}),
 		sessionQueueSize: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: gridSubsystem,
 			Name:      "session_queue_size",
-			Help:      "number of queued sessions",
+			Help:      "Number of queued sessions.",
 		}),
 		nodeCount: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: gridSubsystem,
 			Name:      "node_count",
-			Help:      "number of nodes",
+			Help:      "Number of nodes.",
 		}),
-		// NEW
 		version: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: gridSubsystem,
 			Name:      "version",
-			Help:      "Hub/Router version",
+			Help:      "Hub/Router version.",
 		}, []string{versionLabel}),
-		// nodes
 		nodeStatus: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: nodeSubsystem,
 			Name:      "status",
-			Help:      "node status",
+			Help:      "Node status.",
 		}, []string{nodeIdLabel, nodeUriLabel, statusLabel}),
 		nodeMaxSession: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: nodeSubsystem,
 			Name:      "max_session",
-			Help:      "maximum number of sessions on node",
+			Help:      "Maximum number of sessions on node.",
 		}, []string{nodeIdLabel, nodeUriLabel}),
 		nodeSlotCount: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: nodeSubsystem,
 			Name:      "slot_count",
-			Help:      "number of slots on node",
+			Help:      "Number of slots on node.",
 		}, []string{nodeIdLabel, nodeUriLabel}),
 		nodeSessionCount: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: nodeSubsystem,
 			Name:      "session_count",
-			Help:      "number of active sessions on node",
+			Help:      "Number of active sessions on node.",
 		}, []string{nodeIdLabel, nodeUriLabel}),
 		nodeVersion: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: nameSpace,
 			Subsystem: nodeSubsystem,
 			Name:      "version",
-			Help:      "Node version",
+			Help:      "Node version.",
 		}, []string{nodeIdLabel, nodeUriLabel, versionLabel}),
 	}
 }
@@ -181,10 +176,6 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 Collect is called by Prometheus at regular intervals to provide current data
 */
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
-
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
-
 	e.scrape()
 
 	ch <- e.up
@@ -192,7 +183,6 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	ch <- e.maxSession
 	ch <- e.sessionCount
 	ch <- e.sessionQueueSize
-	//new
 	ch <- e.nodeCount
 	e.version.Collect(ch)
 	e.nodeStatus.Collect(ch)
@@ -200,93 +190,162 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	e.nodeSlotCount.Collect(ch)
 	e.nodeSessionCount.Collect(ch)
 	e.nodeVersion.Collect(ch)
-
-	return
 }
 
-func (e *Exporter) scrape() {
+// func (e *Exporter) scrape() {
 
-	e.totalSlots.Set(0)
-	e.maxSession.Set(0)
-	e.sessionCount.Set(0)
-	e.sessionQueueSize.Set(0)
-	e.nodeCount.Set(0)
-	e.version.Reset()
+// 	e.totalSlots.Set(0)
+// 	e.maxSession.Set(0)
+// 	e.sessionCount.Set(0)
+// 	e.sessionQueueSize.Set(0)
+// 	e.nodeCount.Set(0)
+// 	e.version.Reset()
+// 	e.nodeStatus.Reset()
+// 	e.nodeMaxSession.Reset()
+// 	e.nodeSlotCount.Reset()
+// 	e.nodeSessionCount.Reset()
+// 	e.nodeVersion.Reset()
+
+// 	body, err := e.fetch()
+// 	if err != nil {
+// 		e.up.Set(0)
+
+// 		logrus.Errorf("Error scraping Selenium Grid: %v", err)
+// 		return
+// 	}
+
+// 	e.up.Set(1)
+
+// 	var hResponse hubResponse
+
+// 	if err := json.Unmarshal(body, &hResponse); err != nil {
+
+// 		logrus.Errorf("Error decoding Selenium Grid response: %v", err)
+// 		return
+// 	}
+// 	grid := hResponse.Data.Grid
+// 	e.totalSlots.Set(grid.TotalSlots)
+// 	e.maxSession.Set(grid.MaxSession)
+// 	e.sessionCount.Set(grid.SessionCount)
+// 	e.sessionQueueSize.Set(grid.SessionQueueSize)
+// 	//new
+// 	e.nodeCount.Set(grid.NodeCount)
+// 	e.version.WithLabelValues(grid.Version).Set(1.0)
+// 	for _, n := range hResponse.Data.NodesInfo.Nodes {
+// 		e.nodeStatus.WithLabelValues(n.Id, n.Uri, n.Status).Set(1.0)
+// 		e.nodeMaxSession.WithLabelValues(n.Id, n.Uri).Set(n.MaxSession)
+// 		e.nodeSlotCount.WithLabelValues(n.Id, n.Uri).Set(n.SlotCount)
+// 		e.nodeSessionCount.WithLabelValues(n.Id, n.Uri).Set(n.SessionCount)
+// 		e.nodeVersion.WithLabelValues(n.Id, n.Uri, n.Version).Set(1.0)
+// 	}
+// }
+
+func (e *Exporter) scrape() {
+	body, err := e.fetch()
+	if err != nil {
+		e.up.Set(0) // Indicate scrape failure
+		logrus.Errorf("Error scraping Selenium Grid: %v", err)
+
+		// Clear node-specific metrics completely
+		e.nodeStatus.Reset()
+		e.nodeMaxSession.Reset()
+		e.nodeSlotCount.Reset()
+		e.nodeSessionCount.Reset()
+		e.nodeVersion.Reset()
+		return
+	}
+
+	e.up.Set(1) // Indicate scrape success
+	logrus.Info("Successfully scraped Selenium Grid")
+
+	var hResponse hubResponse
+	if err := json.Unmarshal(body, &hResponse); err != nil {
+		logrus.Errorf("Error decoding Selenium Grid response: %v", err)
+		e.up.Set(0)
+
+		// Clear node-specific metrics completely
+		e.nodeStatus.Reset()
+		e.nodeMaxSession.Reset()
+		e.nodeSlotCount.Reset()
+		e.nodeSessionCount.Reset()
+		e.nodeVersion.Reset()
+		return
+	}
+
+	// Update grid metrics
+	grid := hResponse.Data.Grid
+	e.totalSlots.Set(grid.TotalSlots)
+	e.maxSession.Set(grid.MaxSession)
+	e.sessionCount.Set(grid.SessionCount)
+	e.sessionQueueSize.Set(grid.SessionQueueSize)
+	e.nodeCount.Set(grid.NodeCount)
+	e.version.WithLabelValues(grid.Version).Set(1.0)
+
+	// Update node-specific metrics
 	e.nodeStatus.Reset()
 	e.nodeMaxSession.Reset()
 	e.nodeSlotCount.Reset()
 	e.nodeSessionCount.Reset()
 	e.nodeVersion.Reset()
 
-	body, err := e.fetch()
-	if err != nil {
-		e.up.Set(0)
-
-		logrus.Errorf("Can't scrape Selenium Grid: %v", err)
-		return
-	}
-
-	e.up.Set(1)
-
-	var hResponse hubResponse
-
-	if err := json.Unmarshal(body, &hResponse); err != nil {
-
-		logrus.Errorf("Can't decode Selenium Grid response: %v", err)
-		return
-	}
-	grid := hResponse.Data.Grid
-	e.totalSlots.Set(grid.TotalSlots)
-	e.maxSession.Set(grid.MaxSession)
-	e.sessionCount.Set(grid.SessionCount)
-	e.sessionQueueSize.Set(grid.SessionQueueSize)
-	//new
-	e.nodeCount.Set(grid.NodeCount)
-	e.version.WithLabelValues(grid.Version).Add(1.0)
 	for _, n := range hResponse.Data.NodesInfo.Nodes {
-		e.nodeStatus.WithLabelValues(n.Id, n.Uri, n.Status).Add(1.0)
-		e.nodeMaxSession.WithLabelValues(n.Id, n.Uri).Add(n.MaxSession)
-		e.nodeSlotCount.WithLabelValues(n.Id, n.Uri).Add(n.SlotCount)
-		e.nodeSessionCount.WithLabelValues(n.Id, n.Uri).Add(n.SessionCount)
-		e.nodeVersion.WithLabelValues(n.Id, n.Uri, n.Version).Add(1.0)
+		e.nodeStatus.WithLabelValues(n.Id, n.Uri, n.Status).Set(1.0)
+		e.nodeMaxSession.WithLabelValues(n.Id, n.Uri).Set(n.MaxSession)
+		e.nodeSlotCount.WithLabelValues(n.Id, n.Uri).Set(n.SlotCount)
+		e.nodeSessionCount.WithLabelValues(n.Id, n.Uri).Set(n.SessionCount)
+		e.nodeVersion.WithLabelValues(n.Id, n.Uri, n.Version).Set(1.0)
 	}
 }
 
-func (e Exporter) fetch() (output []byte, err error) {
-
-	url := (e.URI + "/graphql")
-	method := "POST"
-
-	payload := strings.NewReader(`{
-    "query": "{
-          grid {totalSlots, maxSession, sessionCount, sessionQueueSize, nodeCount, version },
-          nodesInfo { nodes { id, uri, status, maxSession, slotCount, sessionCount, version } }
-      }"
-  }`)
-
-	client := http.Client{
-		Timeout: 3 * time.Second,
-	}
-	req, err := http.NewRequest(method, url, payload)
-
+func (e Exporter) fetch() ([]byte, error) {
+	client := http.Client{Timeout: *httpTimeout}
+	req, err := http.NewRequest("POST", e.URI+"/graphql", strings.NewReader(`{
+        "query": "{
+            grid {totalSlots, maxSession, sessionCount, sessionQueueSize, nodeCount, version },
+            nodesInfo { nodes { id, uri, status, maxSession, slotCount, sessionCount, version } }
+        }"
+    }`))
 	if err != nil {
-		fmt.Println(err)
-		return
+		logrus.Errorf("Failed to create request: %v", err)
+		return nil, err
 	}
 	req.Header.Add("Content-Type", "application/json")
 
-	res, err := client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println(err)
-		return
+		logrus.Errorf("Failed to execute request: %v", err)
+		return nil, err
 	}
-	defer res.Body.Close()
+	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(res.Body)
+	if resp.StatusCode != http.StatusOK {
+		logrus.Errorf("Unexpected HTTP status: %s", resp.Status)
+		return nil, fmt.Errorf("unexpected HTTP status: %s", resp.Status)
+	}
 
-	//s := string(body)
-	//fmt.Println(s)
-	return body, err
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.Errorf("Failed to read response body: %v", err)
+		return nil, err
+	}
+
+	return body, nil
+}
+
+func getEnv(key, fallback string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return fallback
+}
+
+func parseDuration(duration string) time.Duration {
+	d, err := time.ParseDuration(duration)
+	if err != nil {
+		logrus.Warnf("Invalid duration format for HTTP_TIMEOUT: %v, defaulting to 5s", err)
+		return 5 * time.Second
+	}
+	return d
 }
 
 func main() {
@@ -297,15 +356,25 @@ func main() {
 		os.Exit(0)
 	}
 
-	logrus.Infoln("Starting selenium_grid_exporter", version)
+	logrus.Infof("Starting Selenium Grid Exporter version %s", version)
+	logrus.Infof("Listening on %s", *listenAddress)
+	logrus.Infof("Scraping Selenium Grid at %s", *scrapeURI)
+	logrus.Infof("Metrics path: %s", *metricsPath)
+	logrus.Infof("HTTP client timeout: %s", httpTimeout.String())
 
-	prometheus.MustRegister(NewExporter(*scrapeURI))
+	exporter := NewExporter(*scrapeURI)
+	prometheus.MustRegister(exporter)
 	prometheus.Unregister(prometheus.NewGoCollector())
 	prometheus.Unregister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
 
 	http.Handle(*metricsPath, promhttp.Handler())
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, *metricsPath, http.StatusMovedPermanently)
+		w.Write([]byte("Welcome to Selenium Grid Exporter! Metrics are available at " + *metricsPath))
+	})
+
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
 	})
 
 	logrus.Fatal(http.ListenAndServe(*listenAddress, nil))
