@@ -17,6 +17,14 @@ Usage of /selenium_grid_exporter:
       Path under which to expose metrics. (default "/metrics")
 ```
 
+### Selenium Grid compatibility
+
+GraphQL requests use Go's `encoding/json` serializer to preserve multiline query
+formatting while escaping newlines as `\n` in the JSON payload. This produces
+RFC 8259-compliant JSON for strict parsers, including Selenium Grid 4.48+, without
+changing the queried fields. Raw line breaks inside JSON strings are invalid,
+even if an older Grid version accepts them.
+
 ### Prometheus/Grafana example
 
 ```

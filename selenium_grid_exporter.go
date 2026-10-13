@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -8,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -299,12 +299,19 @@ func (e *Exporter) scrape() {
 
 func (e Exporter) fetch() ([]byte, error) {
 	client := http.Client{Timeout: *httpTimeout}
-	req, err := http.NewRequest("POST", e.URI+"/graphql", strings.NewReader(`{
-        "query": "{
+	payload, err := json.Marshal(struct {
+		Query string `json:"query"`
+	}{
+		Query: `{
             grid {totalSlots, maxSession, sessionCount, sessionQueueSize, nodeCount, version },
             nodesInfo { nodes { id, uri, status, maxSession, slotCount, sessionCount, version, stereotypes } }
-        }"
-    }`))
+        }`,
+	})
+	if err != nil {
+		logrus.Errorf("Failed to encode GraphQL request: %v", err)
+		return nil, err
+	}
+	req, err := http.NewRequest("POST", e.URI+"/graphql", bytes.NewReader(payload))
 	if err != nil {
 		logrus.Errorf("Failed to create request: %v", err)
 		return nil, err
